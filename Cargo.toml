@@ -1,0 +1,27 @@
+[package]
+name         = "crypsol_logger"
+version      = "0.1.0"
+edition      = "2024"
+authors      = ["Zuhair Thabit<admin@crypsol.tech>"]
+license      = "MIT"
+description  = "Structured asynchronous logger for Rust services with an AWS CloudWatch backend."
+readme       = "README.md"
+repository   = "https://github.com/crypsol/crypsol_logger"
+documentation= "https://docs.rs/crypsol_logger"
+keywords     = ["logging", "aws", "cloudwatch", "tokio", "async"]
+categories   = ["development-tools::debugging", "asynchronous"]
+
+[dependencies]
+aws-config              = { version = "1.6.1", features = ["behavior-version-latest"] }
+aws-sdk-cloudwatchlogs  = { version = "1.76.0", features = ["behavior-version-latest"] }
+chrono                  = "0.4.40"
+env_logger              = "0.11.8"
+log                     = "0.4.27"
+tokio                   = { version = "1.44.2", features = ["rt-multi-thread", "macros"] }
+once_cell               = "1.21.3"
+
+[dev-dependencies]
+tokio = { version = "1.44.2", features = ["rt", "macros", "test-util"] }
+
+[package.metadata.docs.rs]
+all-features = true

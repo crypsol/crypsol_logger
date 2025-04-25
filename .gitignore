@@ -1,0 +1,74 @@
+# Compiled program & bytecode, including output of Cargo and rustc
+/target
+**/*.rs.bk
+
+# Remove Cargo.lock from .gitignore if you are creating an executable, keep it ignored for libraries
+Cargo.lock
+
+# Rust debugger output, like macOS dSYM directory or Linux/Windows pdb files
+**/Cargo.lock
+**/*.pdb
+
+# Dependency directories (remove the comment below if you want to ignore it)
+# /vendor
+
+# Fingerprint files for incremental compilation
+**/incremental/
+
+# Ignore macOS and Linux specific files that are not related to the project
+.DS_Store
+*.swp
+*.lock-wscript
+
+# Ignore files related to project configuration
+/config.toml
+
+# Ignore batch files
+*.bat
+
+# Ignore all log files and temp files
+*.log
+*.tmp
+
+# Ignore environment files containing sensitive information
+.env
+
+# IDEs and editors
+/.idea
+*.iml
+*.iws
+.vscode/
+*.vscode.json
+*.sublime-workspace
+
+# Ignore specific project files that are not relevant to others
+/message_crate.iml
+
+# Node.js dependencies (if you're using wasm-bindgen, for example)
+/node_modules/
+
+# Ignore Python virtual environments
+/venv/
+/.venv
+
+# Ignore files created by JetBrains IDEs
+*.rbc
+
+# Ignore Windows image file caches
+Thumbs.db
+ehthumbs.db
+
+# Ignore folder config file
+Desktop.ini
+
+# Ignore Recycle Bin used on file shares
+$RECYCLE.BIN/
+
+# Ignore Windows Installer files
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Ignore Windows shortcuts
+*.lnk
