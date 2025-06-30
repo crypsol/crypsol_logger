@@ -26,7 +26,31 @@ macro_rules! log {
 
             // Spawn the logging in an async task to avoid blocking
             tokio::spawn(async move {
-                let _ = $crate::logs::custom_cloudwatch_log(
+                if let Err(e) = $crate::logs::custom_cloudwatch_log(
+                    $level,
+                    &message_str,
+                    log_stream,
+                    file!(),
+                    line!()
+                ).await {
+                    let err_msg = format!("CloudWatch logging failed: {:?}", e);
+                    if $crate::logs::is_log_to_file_enabled() {
+                        let _ = $crate::logs::write_log_to_file(
+                            $crate::Level::Error,
+                            &err_msg,
+                            $crate::logs::LogStream::ServerErrorResponses,
+                            file!(),
+                            line!()
+                        ).await;
+                    }
+                    eprintln!("{err_msg}");
+                }
+            });
+        } else if $crate::logs::is_log_to_file_enabled() {
+            let message_str = format!($($arg)+);
+            let log_stream = $crate::logs::LogStream::from_level(&$level);
+            tokio::spawn(async move {
+                let _ = $crate::logs::write_log_to_file(
                     $level,
                     &message_str,
                     log_stream,
@@ -35,13 +59,21 @@ macro_rules! log {
                 ).await;
             });
         } else {
-            // Fallback to console logging if CloudWatch logging is disabled
-            match $level {
-                log::Level::Error => println!("ERROR: {}", format!($($arg)+)),
-                log::Level::Warn  => println!("WARN: {}",  format!($($arg)+)),
-                log::Level::Info  => println!("INFO: {}",  format!($($arg)+)),
-                log::Level::Debug => println!("DEBUG: {}", format!($($arg)+)),
-                log::Level::Trace => println!("TRACE: {}", format!($($arg)+)),
+            // Fallback to console logging if other logging is disabled
+            let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let lvl_col = $crate::logs::colored_level($level);
+            if $crate::logs::is_log_location_enabled() {
+                println!(
+                    "[{ts}] {lvl_col} - {} (File: {}, Line: {})",
+                    format!($($arg)+),
+                    file!(),
+                    line!()
+                );
+            } else {
+                println!(
+                    "[{ts}] {lvl_col} - {}",
+                    format!($($arg)+)
+                );
             }
         }
     }};
@@ -58,14 +90,35 @@ macro_rules! log {
 #[macro_export]
 macro_rules! log_custom {
     ($level:expr, $log_stream:expr, $($arg:tt)+) => {{
-        let log_to_cloudwatch = std::env::var("LOG_TO_CLOUDWATCH")
-            .unwrap_or_else(|_| "true".to_string()) == "true";
-
-        if log_to_cloudwatch {
+        if $crate::logs::is_log_to_cloudwatch_enabled() {
             let message_str = format!($($arg)+);
             let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
             tokio::spawn(async move {
-                let _ = $crate::logs::custom_cloudwatch_log(
+                if let Err(e) = $crate::logs::custom_cloudwatch_log(
+                    $level,
+                    &message_str,
+                    stream,
+                    file!(),
+                    line!()
+                ).await {
+                    let err_msg = format!("CloudWatch logging failed: {:?}", e);
+                    if $crate::logs::is_log_to_file_enabled() {
+                        let _ = $crate::logs::write_log_to_file(
+                            $crate::Level::Error,
+                            &err_msg,
+                            $crate::logs::LogStream::ServerErrorResponses,
+                            file!(),
+                            line!()
+                        ).await;
+                    }
+                    eprintln!("{err_msg}");
+                }
+            });
+        } else if $crate::logs::is_log_to_file_enabled() {
+            let message_str = format!($($arg)+);
+            let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
+            tokio::spawn(async move {
+                let _ = $crate::logs::write_log_to_file(
                     $level,
                     &message_str,
                     stream,
@@ -75,12 +128,20 @@ macro_rules! log_custom {
             });
         } else {
             // Console fallback
-            match $level {
-                log::Level::Error => println!("{} ::ERROR: {}", $log_stream, format!($($arg)+)),
-                log::Level::Warn  => println!("{} ::WARN: {}",  $log_stream, format!($($arg)+)),
-                log::Level::Info  => println!("{} ::INFO: {}",  $log_stream, format!($($arg)+)),
-                log::Level::Debug => println!("{} ::DEBUG: {}", $log_stream, format!($($arg)+)),
-                log::Level::Trace => println!("{} ::TRACE: {}", $log_stream, format!($($arg)+)),
+            let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let lvl_col = $crate::logs::colored_level($level);
+            if $crate::logs::is_log_location_enabled() {
+                println!(
+                    "[{ts}] {lvl_col} - {} (File: {}, Line: {})",
+                    format!($($arg)+),
+                    file!(),
+                    line!()
+                );
+            } else {
+                println!(
+                    "[{ts}] {lvl_col} - {}",
+                    format!($($arg)+)
+                );
             }
         }
     }};
