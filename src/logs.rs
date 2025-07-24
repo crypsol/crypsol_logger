@@ -14,6 +14,7 @@ use chrono::Utc;
 use colored::{ColoredString, Colorize};
 use env_logger::Builder;
 use log::Level;
+use tokio::time::{Duration, sleep};
 
 /// This static cache keeps track of whether a log group exists, avoiding repeated Describe calls.
 static GROUP_EXISTS_CACHE: Lazy<RwLock<HashMap<String, bool>>> =
@@ -175,10 +176,12 @@ async fn verify_cloudwatch_credentials(
     {
         Ok(_) => Ok(()),
         Err(e) => {
-            let msg = format!("{:?}", e);
+            let msg = format!("{e:?}");
             if msg.contains("AccessDenied") {
+                log::error!("CloudWatch access denied while verifying credentials: {msg}");
                 Ok(())
             } else {
+                log::error!("Failed to verify CloudWatch credentials: {msg}");
                 Err(Error::AwsConfig(msg))
             }
         }
@@ -204,6 +207,27 @@ impl std::fmt::Display for Error {
 }
 
 impl error::Error for Error {}
+
+/// Executes the provided async operation, retrying with exponential backoff if
+/// the result is an `Error::AwsConfig` containing `"ThrottlingException"`.
+async fn retry_on_throttling<F, Fut, T>(mut op: F) -> Result<T, Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Error>>,
+{
+    let mut delay = Duration::from_millis(100);
+    for _ in 0..3 {
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(Error::AwsConfig(msg)) if msg.contains("Throttling") => {
+                sleep(delay).await;
+                delay *= 2;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    op().await
+}
 
 /// Represents different categories of log streams. This enum is used for mapping log levels or custom stream names
 /// to appropriate CloudWatch log streams. Each variant holds a string representation used for naming the log streams.
@@ -326,8 +350,13 @@ pub async fn custom_cloudwatch_log(
         return Err(Error::InvalidCredentials);
     }
 
+    log::debug!("Logging to CloudWatch group '{log_group_name}', stream '{log_stream_name}'");
+
     // Ensure that the log group and stream exist before logging
     if let Err(e) = ensure_log_stream_exists(&client, &log_group_name, &log_stream_name).await {
+        log::error!(
+            "Failed to ensure log stream '{log_stream_name}' in group '{log_group_name}': {e}"
+        );
         return Err(e);
     }
 
@@ -346,6 +375,7 @@ pub async fn custom_cloudwatch_log(
     };
 
     if let Err(e) = LOG_BATCH_SENDER.send(batch_item).await {
+        log::error!("Failed to enqueue log batch: {e}");
         return Err(Error::AwsConfig(e.to_string()));
     }
 
@@ -430,6 +460,9 @@ async fn put_log_events_batch_with_retry(
                 e.downcast_ref::<PutLogEventsError>()
             {
                 attempt_count += 1;
+                log::debug!(
+                    "Invalid sequence token detected for {group}/{stream}, fetching latest token"
+                );
                 let fresh = fetch_latest_stream_token(client, group, stream).await;
                 match put_log_events_once(client, group, stream, fresh.clone(), events).await {
                     Ok(new_tok2) => {
@@ -437,9 +470,13 @@ async fn put_log_events_batch_with_retry(
                         log::debug!("Log batch sent successfully in {attempt_count} attempt(s)");
                         Ok(())
                     }
-                    Err(e2) => Err(e2),
+                    Err(e2) => {
+                        log::error!("Retry after InvalidSequenceTokenException failed: {e2}");
+                        Err(e2)
+                    }
                 }
             } else {
+                log::error!("Failed to send log batch: {e}");
                 Err(e)
             }
         }
@@ -542,19 +579,23 @@ async fn ensure_log_stream_exists(
         let read_map = STREAM_EXISTS_CACHE.read().await;
         if let Some(already_exists) = read_map.get(&key) {
             if *already_exists {
+                log::debug!("Log stream '{stream}' already exists in group '{group}' (cache)");
                 return Ok(());
             }
         }
     }
 
     // Not in cache; describe to see if it exists
-    let resp = client
-        .describe_log_streams()
-        .log_group_name(group)
-        .log_stream_name_prefix(stream)
-        .send()
-        .await
-        .map_err(|e| Error::AwsConfig(e.to_string()))?;
+    let resp = retry_on_throttling(|| async {
+        client
+            .describe_log_streams()
+            .log_group_name(group)
+            .log_stream_name_prefix(stream)
+            .send()
+            .await
+            .map_err(|e| Error::AwsConfig(format!("{e:?}")))
+    })
+    .await?;
 
     let found = resp
         .log_streams()
@@ -563,13 +604,25 @@ async fn ensure_log_stream_exists(
 
     // Create if not found
     if !found {
-        client
-            .create_log_stream()
-            .log_group_name(group)
-            .log_stream_name(stream)
-            .send()
-            .await
-            .map_err(|e| Error::AwsConfig(e.to_string()))?;
+        log::debug!("Creating log stream '{stream}' in group '{group}'");
+        if let Err(e) = retry_on_throttling(|| async {
+            client
+                .create_log_stream()
+                .log_group_name(group)
+                .log_stream_name(stream)
+                .send()
+                .await
+                .map_err(|e| Error::AwsConfig(format!("{e:?}")))
+        })
+        .await
+        {
+            let msg = format!("{e:?}");
+            if msg.contains("ResourceAlreadyExists") {
+                log::debug!("Log stream '{stream}' already exists according to AWS");
+            } else {
+                return Err(Error::AwsConfig(msg));
+            }
+        }
     }
 
     // Update cache
@@ -577,6 +630,8 @@ async fn ensure_log_stream_exists(
         let mut write_map = STREAM_EXISTS_CACHE.write().await;
         write_map.insert(key, true);
     }
+
+    log::debug!("Log stream '{stream}' verified in group '{group}'");
 
     Ok(())
 }
@@ -592,18 +647,22 @@ async fn ensure_log_group_exists(client: &CloudWatchLogsClient, group: &str) -> 
         let read_map = GROUP_EXISTS_CACHE.read().await;
         if let Some(already) = read_map.get(group) {
             if *already {
+                log::debug!("Log group '{group}' already exists (cache)");
                 return Ok(());
             }
         }
     }
 
     // If not in cache, describe
-    let resp = client
-        .describe_log_groups()
-        .log_group_name_prefix(group)
-        .send()
-        .await
-        .map_err(|e| Error::AwsConfig(e.to_string()))?;
+    let resp = retry_on_throttling(|| async {
+        client
+            .describe_log_groups()
+            .log_group_name_prefix(group)
+            .send()
+            .await
+            .map_err(|e| Error::AwsConfig(format!("{e:?}")))
+    })
+    .await?;
 
     let found = resp
         .log_groups()
@@ -612,12 +671,24 @@ async fn ensure_log_group_exists(client: &CloudWatchLogsClient, group: &str) -> 
 
     // If not found, create the group
     if !found {
-        client
-            .create_log_group()
-            .log_group_name(group)
-            .send()
-            .await
-            .map_err(|e| Error::AwsConfig(e.to_string()))?;
+        log::debug!("Creating log group '{group}'");
+        if let Err(e) = retry_on_throttling(|| async {
+            client
+                .create_log_group()
+                .log_group_name(group)
+                .send()
+                .await
+                .map_err(|e| Error::AwsConfig(format!("{e:?}")))
+        })
+        .await
+        {
+            let msg = format!("{e:?}");
+            if msg.contains("ResourceAlreadyExists") {
+                log::debug!("Log group '{group}' already exists according to AWS");
+            } else {
+                return Err(Error::AwsConfig(msg));
+            }
+        }
     }
 
     // Update group cache
@@ -625,6 +696,8 @@ async fn ensure_log_group_exists(client: &CloudWatchLogsClient, group: &str) -> 
         let mut write_map = GROUP_EXISTS_CACHE.write().await;
         write_map.insert(group.to_string(), true);
     }
+
+    log::debug!("Log group '{group}' verified");
 
     Ok(())
 }

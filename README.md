@@ -21,7 +21,7 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-crypsol_logger = "0.1.0"
+crypsol_logger = "0.2.1"
 ```
 The `Level` enum is re-exported, so there's no need to add the `log` crate separately.
 
