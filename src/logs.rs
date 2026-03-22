@@ -299,6 +299,18 @@ pub fn format_log_entry(level: Level, message: &str, file: &str, line: u32) -> S
     }
 }
 
+/// Combines `message` and `fields` into a compact JSON string.
+pub fn build_structured_message(
+    message: &str,
+    mut fields: serde_json::Map<String, serde_json::Value>,
+) -> String {
+    fields.insert(
+        "message".into(),
+        serde_json::Value::String(message.to_string()),
+    );
+    serde_json::Value::Object(fields).to_string()
+}
+
 /// Returns a colored representation of the log level for pretty output.
 pub fn colored_level(level: Level) -> ColoredString {
     match level {

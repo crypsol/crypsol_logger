@@ -1,4 +1,4 @@
-use crypsol_logger::{Level, logs};
+use crypsol_logger::{Level, log, log_custom, logs};
 
 #[test]
 fn test_format_log_entry_with_location() {
@@ -46,4 +46,60 @@ fn test_logstream_from_level() {
         LogStream::from_level(&Level::Warn),
         LogStream::ClientErrorResponses
     ));
+}
+
+#[test]
+fn test_build_structured_message_contains_all_fields() {
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "user_id".to_string(),
+        serde_json::Value::String("42".to_string()),
+    );
+    fields.insert(
+        "action".to_string(),
+        serde_json::Value::String("login".to_string()),
+    );
+
+    let result = logs::build_structured_message("user authenticated", fields);
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+    assert_eq!(parsed["message"], "user authenticated");
+    assert_eq!(parsed["user_id"], "42");
+    assert_eq!(parsed["action"], "login");
+}
+
+#[test]
+fn test_build_structured_message_single_field() {
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "count".to_string(),
+        serde_json::Value::String("7".to_string()),
+    );
+
+    let result = logs::build_structured_message("items processed", fields);
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+    assert_eq!(parsed["message"], "items processed");
+    assert_eq!(parsed["count"], "7");
+}
+
+#[tokio::test]
+async fn test_log_macro_structured_arm() {
+    unsafe { std::env::remove_var("LOG_TO_CLOUDWATCH") };
+    unsafe { std::env::remove_var("LOG_TO_FILE") };
+    unsafe { std::env::remove_var("LOG_SHOW_LOCATION") };
+
+    let uid = 99u64;
+    let ip = "10.0.0.1";
+    log!(Level::Info, "connection from {}", ip; "user_id" => uid, "ip" => ip);
+}
+
+#[tokio::test]
+async fn test_log_custom_macro_structured_arm() {
+    unsafe { std::env::remove_var("LOG_TO_CLOUDWATCH") };
+    unsafe { std::env::remove_var("LOG_TO_FILE") };
+    unsafe { std::env::remove_var("LOG_SHOW_LOCATION") };
+
+    let order = "ORD-001";
+    log_custom!(Level::Info, "Orders", "order placed"; "order_id" => order, "total" => 250);
 }

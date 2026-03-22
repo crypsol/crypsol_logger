@@ -1,6 +1,8 @@
 #[macro_use]
 pub mod logs;
 pub use log::Level;
+#[doc(hidden)]
+pub use serde_json;
 /*
  * This file provides two macros for logging:
  * 1) `log!` for standard usage (maps to a log level and auto-selects a log stream).
@@ -16,15 +18,81 @@ pub use log::Level;
 /// # Usage
 /// ```ignore
 /// log!(Level::Info, "Hello from the log!");
+/// log!(Level::Info, "User logged in"; "user_id" => user_id, "ip" => ip_addr);
 /// ```
 #[macro_export]
 macro_rules! log {
+
+    ($level:expr, $fmt:literal $(, $fmtarg:expr)* ; $($key:literal => $field:expr),+ $(,)?) => {{
+        let message_str = format!($fmt $(, $fmtarg)*);
+        let mut fields = $crate::serde_json::Map::new();
+        $(
+            fields.insert(
+                $key.to_string(),
+                $crate::serde_json::Value::String(format!("{}", $field)),
+            );
+        )+
+        let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
+
+        if $crate::logs::is_log_to_cloudwatch_enabled() {
+            let log_stream = $crate::logs::LogStream::from_level(&$level);
+            tokio::spawn(async move {
+                if let Err(e) = $crate::logs::custom_cloudwatch_log(
+                    $level,
+                    &structured_msg,
+                    log_stream,
+                    file!(),
+                    line!()
+                ).await {
+                    let err_msg = format!("CloudWatch logging failed: {:?}", e);
+                    if $crate::logs::is_log_to_file_enabled() {
+                        let _ = $crate::logs::write_log_to_file(
+                            $crate::Level::Error,
+                            &err_msg,
+                            $crate::logs::LogStream::ServerErrorResponses,
+                            file!(),
+                            line!()
+                        ).await;
+                    }
+                    eprintln!("{err_msg}");
+                }
+            });
+        } else if $crate::logs::is_log_to_file_enabled() {
+            let log_stream = $crate::logs::LogStream::from_level(&$level);
+            tokio::spawn(async move {
+                let _ = $crate::logs::write_log_to_file(
+                    $level,
+                    &structured_msg,
+                    log_stream,
+                    file!(),
+                    line!()
+                ).await;
+            });
+        } else {
+            let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let lvl_col = $crate::logs::colored_level($level);
+            if $crate::logs::is_log_location_enabled() {
+                println!(
+                    "[{ts}] {lvl_col} - {} (File: {}, Line: {})",
+                    structured_msg,
+                    file!(),
+                    line!()
+                );
+            } else {
+                println!(
+                    "[{ts}] {lvl_col} - {}",
+                    structured_msg
+                );
+            }
+        }
+    }};
+
+
     ($level:expr, $($arg:tt)+) => {{
         if $crate::logs::is_log_to_cloudwatch_enabled() {
             let message_str = format!($($arg)+);
             let log_stream = $crate::logs::LogStream::from_level(&$level);
 
-            // Spawn the logging in an async task to avoid blocking
             tokio::spawn(async move {
                 if let Err(e) = $crate::logs::custom_cloudwatch_log(
                     $level,
@@ -86,9 +154,76 @@ macro_rules! log {
 /// # Usage
 /// ```ignore
 /// log_custom!(Level::Info, "MyCustomStream", "Hello from a custom stream!");
+/// log_custom!(Level::Info, "MyCustomStream", "order placed"; "order_id" => id, "total" => amount);
 /// ```
 #[macro_export]
 macro_rules! log_custom {
+
+    ($level:expr, $log_stream:expr, $fmt:literal $(, $fmtarg:expr)* ; $($key:literal => $field:expr),+ $(,)?) => {{
+        let message_str = format!($fmt $(, $fmtarg)*);
+        let mut fields = $crate::serde_json::Map::new();
+        $(
+            fields.insert(
+                $key.to_string(),
+                $crate::serde_json::Value::String(format!("{}", $field)),
+            );
+        )+
+        let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
+
+        if $crate::logs::is_log_to_cloudwatch_enabled() {
+            let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
+            tokio::spawn(async move {
+                if let Err(e) = $crate::logs::custom_cloudwatch_log(
+                    $level,
+                    &structured_msg,
+                    stream,
+                    file!(),
+                    line!()
+                ).await {
+                    let err_msg = format!("CloudWatch logging failed: {:?}", e);
+                    if $crate::logs::is_log_to_file_enabled() {
+                        let _ = $crate::logs::write_log_to_file(
+                            $crate::Level::Error,
+                            &err_msg,
+                            $crate::logs::LogStream::ServerErrorResponses,
+                            file!(),
+                            line!()
+                        ).await;
+                    }
+                    eprintln!("{err_msg}");
+                }
+            });
+        } else if $crate::logs::is_log_to_file_enabled() {
+            let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
+            tokio::spawn(async move {
+                let _ = $crate::logs::write_log_to_file(
+                    $level,
+                    &structured_msg,
+                    stream,
+                    file!(),
+                    line!()
+                ).await;
+            });
+        } else {
+            let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let lvl_col = $crate::logs::colored_level($level);
+            if $crate::logs::is_log_location_enabled() {
+                println!(
+                    "[{ts}] {lvl_col} - {} (File: {}, Line: {})",
+                    structured_msg,
+                    file!(),
+                    line!()
+                );
+            } else {
+                println!(
+                    "[{ts}] {lvl_col} - {}",
+                    structured_msg
+                );
+            }
+        }
+    }};
+
+
     ($level:expr, $log_stream:expr, $($arg:tt)+) => {{
         if $crate::logs::is_log_to_cloudwatch_enabled() {
             let message_str = format!($($arg)+);

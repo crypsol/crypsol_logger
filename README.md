@@ -21,7 +21,7 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-crypsol_logger = "0.2.1"
+crypsol_logger = "0.2.2"
 ```
 The `Level` enum is re-exported, so there's no need to add the `log` crate separately.
 
@@ -37,10 +37,26 @@ log!(Level::Error, "This is an error message");
 log!(Level::Debug, "Debugging information");
 ```
 
+You can also attach structured key-value fields to any log call. Just add a `;` after the message and pass your fields as `"key" => value` pairs:
+
+```rust
+log!(Level::Info, "User {} logged in", user_id; "ip" => ip_addr, "role" => role);
+log!(Level::Error, "payment failed"; "order_id" => order_id, "amount" => amount);
+```
+
+This produces a JSON message like:
+
+```json
+{"message":"User 42 logged in","ip":"10.0.0.1","role":"admin"}
+```
+
+Plain string logs still work exactly the same — the structured fields are fully optional and backward-compatible.
+
 To log in a custom stream (other than info, error and debug) you can use log_custom macro
 
 ```rust
-log_custom!(Level::Info,"Custom Stream Name", "This is the message and variable {variable}");
+log_custom!(Level::Info, "Custom Stream Name", "This is the message and variable {variable}");
+log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" => total);
 ```
 
 ✅ That's it! Logs are automatically captured and either sent to AWS CloudWatch or printed locally.
