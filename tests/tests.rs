@@ -103,3 +103,21 @@ async fn test_log_custom_macro_structured_arm() {
     let order = "ORD-001";
     log_custom!(Level::Info, "Orders", "order placed"; "order_id" => order, "total" => 250);
 }
+
+#[test]
+fn test_structured_fields_preserve_types() {
+    let mut fields = serde_json::Map::new();
+    fields.insert("count".into(), serde_json::Value::from(42_i64));
+    fields.insert("active".into(), serde_json::Value::from(true));
+    fields.insert("name".into(), serde_json::Value::from("alice"));
+
+    let result = logs::build_structured_message("typed check", fields);
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+    assert!(parsed["count"].is_number(), "count should be a JSON number");
+    assert!(parsed["active"].is_boolean(), "active should be a JSON bool");
+    assert!(parsed["name"].is_string(), "name should be a JSON string");
+    assert_eq!(parsed["count"], 42);
+    assert_eq!(parsed["active"], true);
+    assert_eq!(parsed["name"], "alice");
+}

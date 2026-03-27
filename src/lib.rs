@@ -1,5 +1,6 @@
 #[macro_use]
 pub mod logs;
+pub mod http_backend;
 pub use log::Level;
 #[doc(hidden)]
 pub use serde_json;
@@ -8,8 +9,7 @@ pub use serde_json;
  * 1) `log!` for standard usage (maps to a log level and auto-selects a log stream).
  * 2) `log_custom!` for specifying a custom log stream name.
  *
- * Both macros support sending logs to CloudWatch asynchronously if the "LOG_TO_CLOUDWATCH"
- * environment variable is set to "true". Otherwise, they print logs to the console.
+ * Backends (checked in order): CloudWatch, HTTP push, File, Console.
  */
 
 /// A macro for logging a message with a given log::Level. If `LOG_TO_CLOUDWATCH` is "true",
@@ -29,7 +29,7 @@ macro_rules! log {
         $(
             fields.insert(
                 $key.to_string(),
-                $crate::serde_json::Value::String(format!("{}", $field)),
+                $crate::serde_json::Value::from($field),
             );
         )+
         let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
@@ -56,6 +56,17 @@ macro_rules! log {
                     }
                     eprintln!("{err_msg}");
                 }
+            });
+        } else if $crate::logs::is_log_to_http_enabled() {
+            let log_stream = $crate::logs::LogStream::from_level(&$level);
+            tokio::spawn(async move {
+                $crate::http_backend::queue_http_log(
+                    $level,
+                    &structured_msg,
+                    log_stream,
+                    file!(),
+                    line!()
+                ).await;
             });
         } else if $crate::logs::is_log_to_file_enabled() {
             let log_stream = $crate::logs::LogStream::from_level(&$level);
@@ -114,6 +125,18 @@ macro_rules! log {
                     eprintln!("{err_msg}");
                 }
             });
+        } else if $crate::logs::is_log_to_http_enabled() {
+            let message_str = format!($($arg)+);
+            let log_stream = $crate::logs::LogStream::from_level(&$level);
+            tokio::spawn(async move {
+                $crate::http_backend::queue_http_log(
+                    $level,
+                    &message_str,
+                    log_stream,
+                    file!(),
+                    line!()
+                ).await;
+            });
         } else if $crate::logs::is_log_to_file_enabled() {
             let message_str = format!($($arg)+);
             let log_stream = $crate::logs::LogStream::from_level(&$level);
@@ -165,7 +188,7 @@ macro_rules! log_custom {
         $(
             fields.insert(
                 $key.to_string(),
-                $crate::serde_json::Value::String(format!("{}", $field)),
+                $crate::serde_json::Value::from($field),
             );
         )+
         let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
@@ -192,6 +215,17 @@ macro_rules! log_custom {
                     }
                     eprintln!("{err_msg}");
                 }
+            });
+        } else if $crate::logs::is_log_to_http_enabled() {
+            let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
+            tokio::spawn(async move {
+                $crate::http_backend::queue_http_log(
+                    $level,
+                    &structured_msg,
+                    stream,
+                    file!(),
+                    line!()
+                ).await;
             });
         } else if $crate::logs::is_log_to_file_enabled() {
             let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
@@ -248,6 +282,18 @@ macro_rules! log_custom {
                     }
                     eprintln!("{err_msg}");
                 }
+            });
+        } else if $crate::logs::is_log_to_http_enabled() {
+            let message_str = format!($($arg)+);
+            let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
+            tokio::spawn(async move {
+                $crate::http_backend::queue_http_log(
+                    $level,
+                    &message_str,
+                    stream,
+                    file!(),
+                    line!()
+                ).await;
             });
         } else if $crate::logs::is_log_to_file_enabled() {
             let message_str = format!($($arg)+);

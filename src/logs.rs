@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::env;
 use std::error;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 use aws_config::{Region, SdkConfig};
@@ -54,6 +55,18 @@ static LOG_FILE_DIR: Lazy<String> =
 /// Helper to check if local file logging is enabled.
 pub fn is_log_to_file_enabled() -> bool {
     *LOG_TO_FILE
+}
+
+/// Indicates whether logs should be pushed to a remote HTTP endpoint.
+static LOG_TO_HTTP: Lazy<bool> = Lazy::new(|| {
+    env::var("LOG_TO_HTTP")
+        .map(|val| val.to_lowercase() == "true")
+        .unwrap_or(false)
+});
+
+/// Helper to check if HTTP log push is enabled.
+pub fn is_log_to_http_enabled() -> bool {
+    *LOG_TO_HTTP
 }
 
 /// Returns the directory for local log files.
@@ -113,6 +126,10 @@ static LOG_DELETE_BATCH_MB: Lazy<u64> = Lazy::new(|| {
         .and_then(|s| s.parse().ok())
         .unwrap_or(100)
 });
+
+/// Counter used to throttle `cleanup_logs` calls in the file backend.
+/// A full directory scan on every write is too expensive under load.
+static FILE_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Represents a single log event to be batched.
 struct BatchLogItem {
@@ -178,8 +195,8 @@ async fn verify_cloudwatch_credentials(
         Err(e) => {
             let msg = format!("{e:?}");
             if msg.contains("AccessDenied") {
-                log::error!("CloudWatch access denied while verifying credentials: {msg}");
-                Ok(())
+                log::error!("CloudWatch access denied — check IAM permissions for CloudWatch Logs");
+                Err(Error::InvalidCredentials)
             } else {
                 log::error!("Failed to verify CloudWatch credentials: {msg}");
                 Err(Error::AwsConfig(msg))
@@ -242,7 +259,12 @@ pub enum LogStream {
 }
 
 impl LogStream {
-    /// Returns the base string for each log stream variant, which is used to build final CloudWatch stream names.
+    /// Returns the base string for each stream variant. Public so that
+    /// other modules (e.g. `http_backend`) can read the stream name.
+    pub fn as_str_pub(&self) -> &str {
+        self.as_str()
+    }
+
     fn as_str(&self) -> &str {
         match *self {
             LogStream::ServerErrorResponses => "Server_Error_Responses",
@@ -433,7 +455,9 @@ pub async fn write_log_to_file(
     let entry = format!("[{ts}] {entry_content}\n");
     fh.write_all(entry.as_bytes()).await?;
     fh.flush().await?;
-    let _ = cleanup_logs().await;
+    if FILE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+        let _ = cleanup_logs().await;
+    }
     Ok(())
 }
 
