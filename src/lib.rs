@@ -29,7 +29,7 @@ macro_rules! log {
         $(
             fields.insert(
                 $key.to_string(),
-                $crate::serde_json::Value::from($field),
+                $crate::serde_json::Value::String(format!("{}", $field)),
             );
         )+
         let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
@@ -188,7 +188,7 @@ macro_rules! log_custom {
         $(
             fields.insert(
                 $key.to_string(),
-                $crate::serde_json::Value::from($field),
+                $crate::serde_json::Value::String(format!("{}", $field)),
             );
         )+
         let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
