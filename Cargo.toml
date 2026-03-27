@@ -1,6 +1,6 @@
 [package]
 name         = "crypsol_logger"
-version      = "0.3.3"
+version      = "0.3.4"
 edition      = "2024"
 authors      = ["Zuhair Thabit<admin@crypsol.tech>"]
 license      = "MIT"

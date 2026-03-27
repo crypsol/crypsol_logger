@@ -4,6 +4,32 @@ pub mod http_backend;
 pub use log::Level;
 #[doc(hidden)]
 pub use serde_json;
+
+/// Internal helper: inserts structured key-value pairs into a `serde_json::Map`,
+/// supporting both `Display` (`=>`) and `Debug` (`=>?`) formatting.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __crypsol_kv {
+    // Debug field, more fields follow
+    ($map:ident; $key:literal => ? $val:expr, $($rest:tt)+) => {
+        $map.insert($key.to_string(), $crate::serde_json::Value::String(format!("{:?}", $val)));
+        $crate::__crypsol_kv!($map; $($rest)+);
+    };
+    // Display field, more fields follow
+    ($map:ident; $key:literal => $val:expr, $($rest:tt)+) => {
+        $map.insert($key.to_string(), $crate::serde_json::Value::String(format!("{}", $val)));
+        $crate::__crypsol_kv!($map; $($rest)+);
+    };
+    // Debug field, last (optional trailing comma)
+    ($map:ident; $key:literal => ? $val:expr $(,)?) => {
+        $map.insert($key.to_string(), $crate::serde_json::Value::String(format!("{:?}", $val)));
+    };
+    // Display field, last (optional trailing comma)
+    ($map:ident; $key:literal => $val:expr $(,)?) => {
+        $map.insert($key.to_string(), $crate::serde_json::Value::String(format!("{}", $val)));
+    };
+}
+
 /*
  * This file provides two macros for logging:
  * 1) `log!` for standard usage (maps to a log level and auto-selects a log stream).
@@ -19,19 +45,15 @@ pub use serde_json;
 /// ```ignore
 /// log!(Level::Info, "Hello from the log!");
 /// log!(Level::Info, "User logged in"; "user_id" => user_id, "ip" => ip_addr);
+/// log!(Level::Error, "Query failed"; "component" => "DB", "error" =>? e);
 /// ```
 #[macro_export]
 macro_rules! log {
 
-    ($level:expr, $fmt:literal $(, $fmtarg:expr)* ; $($key:literal => $field:expr),+ $(,)?) => {{
+    ($level:expr, $fmt:literal $(, $fmtarg:expr)* ; $($fields:tt)+) => {{
         let message_str = format!($fmt $(, $fmtarg)*);
         let mut fields = $crate::serde_json::Map::new();
-        $(
-            fields.insert(
-                $key.to_string(),
-                $crate::serde_json::Value::String(format!("{}", $field)),
-            );
-        )+
+        $crate::__crypsol_kv!(fields; $($fields)+);
         let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
 
         if $crate::logs::is_log_to_cloudwatch_enabled() {
@@ -182,15 +204,10 @@ macro_rules! log {
 #[macro_export]
 macro_rules! log_custom {
 
-    ($level:expr, $log_stream:expr, $fmt:literal $(, $fmtarg:expr)* ; $($key:literal => $field:expr),+ $(,)?) => {{
+    ($level:expr, $log_stream:expr, $fmt:literal $(, $fmtarg:expr)* ; $($fields:tt)+) => {{
         let message_str = format!($fmt $(, $fmtarg)*);
         let mut fields = $crate::serde_json::Map::new();
-        $(
-            fields.insert(
-                $key.to_string(),
-                $crate::serde_json::Value::String(format!("{}", $field)),
-            );
-        )+
+        $crate::__crypsol_kv!(fields; $($fields)+);
         let structured_msg = $crate::logs::build_structured_message(&message_str, fields);
 
         if $crate::logs::is_log_to_cloudwatch_enabled() {

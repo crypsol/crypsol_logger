@@ -21,7 +21,7 @@ Structured, production-grade async logger for Rust services — with **CloudWatc
 
 ```toml
 [dependencies]
-crypsol_logger = "0.3.3"
+crypsol_logger = "0.3.4"
 ```
 The `Level` enum is re-exported, so there's no need to add the `log` crate separately.
 
@@ -40,6 +40,9 @@ Attach structured key-value fields with `;` separator:
 ```rust
 log!(Level::Info, "User {} logged in", user_id; "ip" => ip_addr, "role" => role);
 log!(Level::Error, "payment failed"; "order_id" => order_id, "amount" => amount);
+
+// Use `=>?` to automatically format values using the `Debug` trait (e.g., Option, Result, Structs)
+log!(Level::Error, "query failed"; "component" => "DB", "error" =>? db_error);
 ```
 
 Produces JSON:
