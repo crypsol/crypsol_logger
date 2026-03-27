@@ -20,7 +20,7 @@ Structured, production-grade async logger for Rust services — with **CloudWatc
 
 ```toml
 [dependencies]
-crypsol_logger = "0.3.0"
+crypsol_logger = "0.3.1"
 ```
 The `Level` enum is re-exported, so there's no need to add the `log` crate separately.
 

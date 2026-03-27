@@ -455,7 +455,10 @@ pub async fn write_log_to_file(
     let entry = format!("[{ts}] {entry_content}\n");
     fh.write_all(entry.as_bytes()).await?;
     fh.flush().await?;
-    if FILE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+    if FILE_WRITE_COUNT
+        .fetch_add(1, Ordering::Relaxed)
+        .is_multiple_of(100)
+    {
         let _ = cleanup_logs().await;
     }
     Ok(())
@@ -573,10 +576,10 @@ async fn fetch_latest_stream_token(
         .await
     {
         for s in resp.log_streams() {
-            if let Some(name) = s.log_stream_name() {
-                if name == stream {
-                    return s.upload_sequence_token().map(|st| st.to_string());
-                }
+            if let Some(name) = s.log_stream_name()
+                && name == stream
+            {
+                return s.upload_sequence_token().map(|st| st.to_string());
             }
         }
     }
@@ -613,11 +616,11 @@ async fn ensure_log_stream_exists(
     // Check cache for stream existence
     {
         let read_map = STREAM_EXISTS_CACHE.read().await;
-        if let Some(already_exists) = read_map.get(&key) {
-            if *already_exists {
-                log::debug!("Log stream '{stream}' already exists in group '{group}' (cache)");
-                return Ok(());
-            }
+        if let Some(already_exists) = read_map.get(&key)
+            && *already_exists
+        {
+            log::debug!("Log stream '{stream}' already exists in group '{group}' (cache)");
+            return Ok(());
         }
     }
 
@@ -681,11 +684,11 @@ async fn ensure_log_group_exists(client: &CloudWatchLogsClient, group: &str) -> 
     // Check group cache first
     {
         let read_map = GROUP_EXISTS_CACHE.read().await;
-        if let Some(already) = read_map.get(group) {
-            if *already {
-                log::debug!("Log group '{group}' already exists (cache)");
-                return Ok(());
-            }
+        if let Some(already) = read_map.get(group)
+            && *already
+        {
+            log::debug!("Log group '{group}' already exists (cache)");
+            return Ok(());
         }
     }
 
@@ -755,15 +758,14 @@ async fn process_log_batches(mut rx: tokio::sync::mpsc::Receiver<BatchLogItem>) 
                     let key = (item.group, item.stream);
                     batches.entry(key.clone()).or_default().push(item.event);
                     // If the batch size for this key reaches the threshold, flush immediately.
-                    if let Some(events) = batches.get(&key) {
-                        if events.len() >= *BATCH_SIZE {
-                            let events_to_send = batches.remove(&key).unwrap();
-                            let client = GLOBAL_CLIENT.clone();
-                            // Spawn a task to send the batch
-                            tokio::spawn(async move {
-                                let _ = put_log_events_batch_with_retry(&client, &key.0, &key.1, events_to_send).await;
-                            });
-                        }
+                    if let Some(events) = batches.get(&key)
+                        && events.len() >= *BATCH_SIZE
+                    {
+                        let events_to_send = batches.remove(&key).unwrap();
+                        let client = GLOBAL_CLIENT.clone();
+                        tokio::spawn(async move {
+                            let _ = put_log_events_batch_with_retry(&client, &key.0, &key.1, events_to_send).await;
+                        });
                     }
                 } else {
                     // Channel closed, flush remaining batches.
@@ -812,11 +814,11 @@ pub async fn cleanup_logs() -> Result<(), std::io::Error> {
             let ty = entry.file_type().await?;
             if ty.is_dir() {
                 to_visit.push(path);
-            } else if ty.is_file() {
-                if let Ok(meta) = entry.metadata().await {
-                    let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                    files.push((path, modified, meta.len()));
-                }
+            } else if ty.is_file()
+                && let Ok(meta) = entry.metadata().await
+            {
+                let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                files.push((path, modified, meta.len()));
             }
         }
     }

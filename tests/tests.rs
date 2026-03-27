@@ -115,7 +115,10 @@ fn test_structured_fields_preserve_types() {
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
 
     assert!(parsed["count"].is_number(), "count should be a JSON number");
-    assert!(parsed["active"].is_boolean(), "active should be a JSON bool");
+    assert!(
+        parsed["active"].is_boolean(),
+        "active should be a JSON bool"
+    );
     assert!(parsed["name"].is_string(), "name should be a JSON string");
     assert_eq!(parsed["count"], 42);
     assert_eq!(parsed["active"], true);
