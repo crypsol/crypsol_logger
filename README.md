@@ -10,6 +10,7 @@ Structured, production-grade async logger for Rust services — with **CloudWatc
 - ✅ **4 backends**: CloudWatch, HTTP push, local files, console
 - ✅ Automatic batching with configurable size & timeout
 - ✅ Loki, JSON, and NDJSON output formats
+- ✅ Basic Auth for authenticated endpoints (Grafana Cloud, etc.)
 - ✅ Custom labels for log aggregation
 - ✅ Thread-safe, high-performance design
 - ✅ Minimal configuration — just set env vars
@@ -20,7 +21,7 @@ Structured, production-grade async logger for Rust services — with **CloudWatc
 
 ```toml
 [dependencies]
-crypsol_logger = "0.3.1"
+crypsol_logger = "0.3.3"
 ```
 The `Level` enum is re-exported, so there's no need to add the `log` crate separately.
 
@@ -65,7 +66,9 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 | `LOG_TO_HTTP` | `false` | Push logs via HTTP (Loki, Elasticsearch, etc.) |
 | `LOG_TO_FILE` | `false` | Write logs to local disk files |
 | `LOG_SHOW_LOCATION` | `false` | Include `file:line` in output |
-| `AWS_LOG_GROUP` | `default` | Log group name (CloudWatch group / HTTP job label) |
+| `LOG_GROUP` | `default` | Service identifier (Loki job / CloudWatch group / file dir) |
+
+> `AWS_LOG_GROUP` is still supported as a fallback for backward compatibility.
 
 > If none are enabled, logs print to console (stdout).
 
@@ -78,7 +81,7 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 | `CLOUDWATCH_AWS_ACCESS_KEY` | — | ✅ |
 | `CLOUDWATCH_AWS_SECRET_KEY` | — | ✅ |
 | `CLOUDWATCH_AWS_REGION` | `us-east-1` | ✅ |
-| `AWS_LOG_GROUP` | `default` | ✅ |
+| `LOG_GROUP` | `default` | ✅ |
 | `LOG_BATCH_SIZE` | `10` | — |
 | `BATCH_TIMEOUT` | `5` (secs) | — |
 
@@ -93,6 +96,8 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 | `LOG_HTTP_BATCH_SIZE` | `10` | — |
 | `LOG_HTTP_TIMEOUT_SECS` | `5` | — |
 | `LOG_HTTP_LABELS` | — | — |
+| `LOG_HTTP_AUTH_USER` | — | — |
+| `LOG_HTTP_AUTH_TOKEN` | — | — |
 
 **Supported formats:**
 
@@ -103,6 +108,10 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 | `ndjson` | Elasticsearch, OpenSearch | `http://es:9200/logs/_bulk` |
 
 **Custom labels** (optional): `LOG_HTTP_LABELS=env=production,service=my-api`
+
+**Basic Auth** (optional): Set `LOG_HTTP_AUTH_USER` and `LOG_HTTP_AUTH_TOKEN` to enable
+`Authorization: Basic` header on every request. Required for Grafana Cloud and any
+authenticated Loki/Elasticsearch endpoint.
 
 ---
 
@@ -119,12 +128,22 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 
 ## 💡 Quick Start Examples
 
-### Loki (Grafana stack)
+### Loki (local)
 ```env
 LOG_TO_HTTP=true
 LOG_HTTP_ENDPOINT=http://localhost:3100/loki/api/v1/push
 LOG_HTTP_FORMAT=loki
-AWS_LOG_GROUP=my_service
+LOG_GROUP=my_service
+```
+
+### Grafana Cloud (Loki)
+```env
+LOG_TO_HTTP=true
+LOG_HTTP_ENDPOINT=https://logs-prod-XXX.grafana.net/loki/api/v1/push
+LOG_HTTP_FORMAT=loki
+LOG_GROUP=my_service
+LOG_HTTP_AUTH_USER=123456
+LOG_HTTP_AUTH_TOKEN=glc_eyJ...
 ```
 
 ### Elasticsearch
@@ -132,7 +151,7 @@ AWS_LOG_GROUP=my_service
 LOG_TO_HTTP=true
 LOG_HTTP_ENDPOINT=http://elasticsearch:9200/logs/_bulk
 LOG_HTTP_FORMAT=ndjson
-AWS_LOG_GROUP=my_service
+LOG_GROUP=my_service
 ```
 
 ### CloudWatch
@@ -141,14 +160,14 @@ LOG_TO_CLOUDWATCH=true
 CLOUDWATCH_AWS_ACCESS_KEY=AKIA...
 CLOUDWATCH_AWS_SECRET_KEY=JdOT...
 CLOUDWATCH_AWS_REGION=us-east-1
-AWS_LOG_GROUP=my_service
+LOG_GROUP=my_service
 ```
 
 ### Local File
 ```env
 LOG_TO_FILE=true
 LOG_FILE_DIR=logs
-AWS_LOG_GROUP=my_service
+LOG_GROUP=my_service
 ```
 
 ---

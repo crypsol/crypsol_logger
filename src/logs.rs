@@ -344,9 +344,10 @@ pub fn colored_level(level: Level) -> ColoredString {
     }
 }
 
-/// Sends a custom log message to CloudWatch if the `AWS_LOG_GROUP` environment variable is set,
-/// otherwise returning an error if it is missing. This function ensures the log group and log stream
-/// exist, and then queues the log event for batching.
+/// Sends a custom log message to CloudWatch if the `LOG_GROUP` (or legacy `AWS_LOG_GROUP`)
+/// environment variable is set, otherwise returning an error if it is missing.
+/// This function ensures the log group and log stream exist, and then queues
+/// the log event for batching.
 ///
 /// # Arguments
 /// * `level` - The log level (e.g., `Level::Info`)
@@ -361,10 +362,9 @@ pub async fn custom_cloudwatch_log(
     file: &str,
     line: u32,
 ) -> Result<(), Error> {
-    let log_group_name = match env::var("AWS_LOG_GROUP") {
-        Ok(name) => name,
-        Err(_) => return Err(Error::EnvVarMissing("AWS_LOG_GROUP".to_string())),
-    };
+    let log_group_name = env::var("LOG_GROUP")
+        .or_else(|_| env::var("AWS_LOG_GROUP"))
+        .map_err(|_| Error::EnvVarMissing("LOG_GROUP".to_string()))?;
 
     // Build the final stream name (typically daily-based)
     let log_stream_name = log_stream.with_date();
@@ -436,7 +436,9 @@ pub async fn write_log_to_file(
     use tokio::fs::{OpenOptions, create_dir_all};
     use tokio::io::AsyncWriteExt;
 
-    let group = env::var("AWS_LOG_GROUP").unwrap_or_else(|_| "default".to_string());
+    let group = env::var("LOG_GROUP")
+        .or_else(|_| env::var("AWS_LOG_GROUP"))
+        .unwrap_or_else(|_| "default".to_string());
     let stream_name = log_stream.with_date();
 
     let mut path = PathBuf::from(log_file_dir());

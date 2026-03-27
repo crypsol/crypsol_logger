@@ -61,10 +61,28 @@ static HTTP_LABELS: Lazy<Vec<(String, String)>> = Lazy::new(|| {
         .collect()
 });
 
-/// The service/job name used in Loki stream labels. Falls back to `AWS_LOG_GROUP`
-/// then `"default"` so there is always a meaningful label.
-static HTTP_JOB: Lazy<String> =
-    Lazy::new(|| env::var("AWS_LOG_GROUP").unwrap_or_else(|_| "default".into()));
+/// The service/job name used across all backends (Loki stream labels, CloudWatch
+/// log group, file directory). Reads `LOG_GROUP` first, falls back to `AWS_LOG_GROUP`
+/// for backward compatibility, then `"default"`.
+static HTTP_JOB: Lazy<String> = Lazy::new(|| {
+    env::var("LOG_GROUP")
+        .or_else(|_| env::var("AWS_LOG_GROUP"))
+        .unwrap_or_else(|_| "default".into())
+});
+
+/// Optional Basic Auth credentials for authenticated endpoints (e.g. Grafana Cloud).
+static HTTP_AUTH: Lazy<Option<String>> = Lazy::new(|| {
+    let user = env::var("LOG_HTTP_AUTH_USER").ok()?;
+    let token = env::var("LOG_HTTP_AUTH_TOKEN").ok()?;
+    if user.is_empty() || token.is_empty() {
+        return None;
+    }
+    use base64::Engine;
+    Some(format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("{user}:{token}"))
+    ))
+});
 
 /// Shared HTTP client — reuse connections.
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
@@ -162,13 +180,13 @@ async fn push_batch(items: Vec<HttpLogItem>) {
         HttpLogFormat::Ndjson => (format_ndjson(&items), "application/x-ndjson"),
     };
 
-    match HTTP_CLIENT
+    let mut request = HTTP_CLIENT
         .post(HTTP_ENDPOINT.as_str())
-        .header("Content-Type", content_type)
-        .body(body)
-        .send()
-        .await
-    {
+        .header("Content-Type", content_type);
+    if let Some(auth) = HTTP_AUTH.as_ref() {
+        request = request.header("Authorization", auth);
+    }
+    match request.body(body).send().await {
         Ok(resp) if !resp.status().is_success() => {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
