@@ -1,5 +1,6 @@
 #[macro_use]
 pub mod logs;
+#[cfg(feature = "http")]
 pub mod http_backend;
 pub use log::Level;
 #[doc(hidden)]
@@ -82,7 +83,7 @@ macro_rules! log {
         } else if $crate::logs::is_log_to_http_enabled() {
             let log_stream = $crate::logs::LogStream::from_level(&$level);
             tokio::spawn(async move {
-                $crate::http_backend::queue_http_log(
+                $crate::logs::queue_http_log(
                     $level,
                     &structured_msg,
                     log_stream,
@@ -151,7 +152,7 @@ macro_rules! log {
             let message_str = format!($($arg)+);
             let log_stream = $crate::logs::LogStream::from_level(&$level);
             tokio::spawn(async move {
-                $crate::http_backend::queue_http_log(
+                $crate::logs::queue_http_log(
                     $level,
                     &message_str,
                     log_stream,
@@ -236,7 +237,7 @@ macro_rules! log_custom {
         } else if $crate::logs::is_log_to_http_enabled() {
             let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
             tokio::spawn(async move {
-                $crate::http_backend::queue_http_log(
+                $crate::logs::queue_http_log(
                     $level,
                     &structured_msg,
                     stream,
@@ -304,7 +305,7 @@ macro_rules! log_custom {
             let message_str = format!($($arg)+);
             let stream = $crate::logs::LogStream::Custom($log_stream.to_string());
             tokio::spawn(async move {
-                $crate::http_backend::queue_http_log(
+                $crate::logs::queue_http_log(
                     $level,
                     &message_str,
                     stream,

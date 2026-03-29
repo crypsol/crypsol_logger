@@ -1,35 +1,60 @@
-# 🚀 crypsol_logger
+# crypsol_logger
 
 Structured, production-grade async logger for Rust services — with **CloudWatch**, **HTTP push** (Loki / Elasticsearch / custom), **file**, and **console** backends.
 
----
+## Features
 
-## 🔥 Features
+- Structured JSON logging with key-value fields
+- 4 backends: CloudWatch, HTTP push, local files, console
+- Automatic batching with configurable size & timeout
+- Loki, JSON, and NDJSON output formats
+- Basic Auth for authenticated endpoints (Grafana Cloud, etc.)
+- Custom labels for log aggregation
+- Thread-safe, high-performance design
+- Minimal configuration — just set env vars
+- Compile only what you use via feature flags
 
-- ✅ Structured JSON logging with key-value fields
-- ✅ **4 backends**: CloudWatch, HTTP push, local files, console
-- ✅ Automatic batching with configurable size & timeout
-- ✅ Loki, JSON, and NDJSON output formats
-- ✅ Basic Auth for authenticated endpoints (Grafana Cloud, etc.)
-- ✅ Custom labels for log aggregation
-- ✅ Thread-safe, high-performance design
-- ✅ Minimal configuration — just set env vars
+## Installation
 
----
-
-## 📦 Installation
+Add to your `Cargo.toml`:
 
 ```toml
-[dependencies]
-crypsol_logger = "0.3.4"
+# Default: console + file logging
+crypsol_logger = "0.3.5"
+
+# Console only (fastest compile)
+crypsol_logger = { version = "0.3.5", default-features = false, features = ["console"] }
+
+# With CloudWatch
+crypsol_logger = { version = "0.3.5", features = ["cloudwatch"] }
+
+# With HTTP push (Loki, Elasticsearch, etc.)
+crypsol_logger = { version = "0.3.5", features = ["http"] }
+
+# Everything
+crypsol_logger = { version = "0.3.5", features = ["console", "file", "cloudwatch", "http"] }
 ```
+
 The `Level` enum is re-exported, so there's no need to add the `log` crate separately.
 
----
+### Feature Flags
 
-## 🛠 Setup & Usage
+| Feature | Default | Pulls in | Description |
+|---------|---------|----------|-------------|
+| `console` | Yes | — | Colored stdout logging |
+| `file` | Yes | — | Local file logging with retention |
+| `cloudwatch` | No | `aws-config`, `aws-sdk-cloudwatchlogs` | AWS CloudWatch Logs |
+| `http` | No | `reqwest`, `base64` | HTTP push (Loki, Elasticsearch, custom) |
+
+> **Note:** Backends are checked at runtime via env vars (`LOG_TO_FILE`, `LOG_TO_HTTP`, etc.).
+> Enabling a feature compiles the backend code; the env var activates it.
+> If no env var is set, logs go to console (stdout) by default.
+
+## Usage
 
 ```rust
+use crypsol_logger::{Level, log};
+
 log!(Level::Info, "This is an info message");
 log!(Level::Error, "This is an error message");
 log!(Level::Debug, "Debugging information");
@@ -41,8 +66,8 @@ Attach structured key-value fields with `;` separator:
 log!(Level::Info, "User {} logged in", user_id; "ip" => ip_addr, "role" => role);
 log!(Level::Error, "payment failed"; "order_id" => order_id, "amount" => amount);
 
-// Use `=>?` to automatically format values using the `Debug` trait (e.g., Option, Result, Structs)
-log!(Level::Error, "query failed"; "component" => "DB", "error" =>? db_error);
+// Use `=> ?` to format values using the Debug trait (Option, Result, structs, etc.)
+log!(Level::Error, "query failed"; "component" => "DB", "error" => ? db_error);
 ```
 
 Produces JSON:
@@ -57,17 +82,18 @@ Custom log stream:
 log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" => total);
 ```
 
----
+## Environment Variables
 
-## 🧪 Environment Variables
+### Backend Selection
 
-### Backend Selection (priority: CloudWatch > HTTP > File > Console)
+Backends are checked in order: CloudWatch > HTTP > File > Console.
+The first enabled backend wins.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOG_TO_CLOUDWATCH` | `false` | Push logs to AWS CloudWatch |
-| `LOG_TO_HTTP` | `false` | Push logs via HTTP (Loki, Elasticsearch, etc.) |
-| `LOG_TO_FILE` | `false` | Write logs to local disk files |
+| `LOG_TO_CLOUDWATCH` | `false` | Push logs to AWS CloudWatch (requires `cloudwatch` feature) |
+| `LOG_TO_HTTP` | `false` | Push logs via HTTP (requires `http` feature) |
+| `LOG_TO_FILE` | `false` | Write logs to local disk files (requires `file` feature) |
 | `LOG_SHOW_LOCATION` | `false` | Include `file:line` in output |
 | `LOG_GROUP` | `default` | Service identifier (Loki job / CloudWatch group / file dir) |
 
@@ -75,26 +101,26 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 
 > If none are enabled, logs print to console (stdout).
 
----
+### CloudWatch Backend
 
-### ☁️ CloudWatch Backend (`LOG_TO_CLOUDWATCH=true`)
+Requires `features = ["cloudwatch"]` and `LOG_TO_CLOUDWATCH=true`.
 
 | Variable | Default | Required |
 |----------|---------|----------|
-| `CLOUDWATCH_AWS_ACCESS_KEY` | — | ✅ |
-| `CLOUDWATCH_AWS_SECRET_KEY` | — | ✅ |
-| `CLOUDWATCH_AWS_REGION` | `us-east-1` | ✅ |
-| `LOG_GROUP` | `default` | ✅ |
+| `CLOUDWATCH_AWS_ACCESS_KEY` | — | Yes |
+| `CLOUDWATCH_AWS_SECRET_KEY` | — | Yes |
+| `CLOUDWATCH_AWS_REGION` | `us-east-1` | Yes |
+| `LOG_GROUP` | `default` | Yes |
 | `LOG_BATCH_SIZE` | `10` | — |
 | `BATCH_TIMEOUT` | `5` (secs) | — |
 
----
+### HTTP Push Backend
 
-### 🌐 HTTP Push Backend (`LOG_TO_HTTP=true`)
+Requires `features = ["http"]` and `LOG_TO_HTTP=true`.
 
 | Variable | Default | Required |
 |----------|---------|----------|
-| `LOG_HTTP_ENDPOINT` | `http://localhost:3100/loki/api/v1/push` | ✅ |
+| `LOG_HTTP_ENDPOINT` | `http://localhost:3100/loki/api/v1/push` | Yes |
 | `LOG_HTTP_FORMAT` | `loki` | — |
 | `LOG_HTTP_BATCH_SIZE` | `10` | — |
 | `LOG_HTTP_TIMEOUT_SECS` | `5` | — |
@@ -116,9 +142,9 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 `Authorization: Basic` header on every request. Required for Grafana Cloud and any
 authenticated Loki/Elasticsearch endpoint.
 
----
+### File Backend
 
-### 📁 File Backend (`LOG_TO_FILE=true`)
+Enabled by default (part of `file` feature). Activate with `LOG_TO_FILE=true`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -127,11 +153,21 @@ authenticated Loki/Elasticsearch endpoint.
 | `LOG_RETENTION_SIZE_MB` | `512` | Max total size before cleanup |
 | `LOG_DELETE_BATCH_MB` | `100` | Amount deleted when limit is hit |
 
----
+## Quick Start Examples
 
-## 💡 Quick Start Examples
+### Console only (no env vars needed)
+```toml
+crypsol_logger = "0.3.5"
+```
+```rust
+crypsol_logger::logs::initialize_logs();
+log!(Level::Info, "running in console mode");
+```
 
 ### Loki (local)
+```toml
+crypsol_logger = { version = "0.3.5", features = ["http"] }
+```
 ```env
 LOG_TO_HTTP=true
 LOG_HTTP_ENDPOINT=http://localhost:3100/loki/api/v1/push
@@ -140,6 +176,9 @@ LOG_GROUP=my_service
 ```
 
 ### Grafana Cloud (Loki)
+```toml
+crypsol_logger = { version = "0.3.5", features = ["http"] }
+```
 ```env
 LOG_TO_HTTP=true
 LOG_HTTP_ENDPOINT=https://logs-prod-XXX.grafana.net/loki/api/v1/push
@@ -150,6 +189,9 @@ LOG_HTTP_AUTH_TOKEN=glc_eyJ...
 ```
 
 ### Elasticsearch
+```toml
+crypsol_logger = { version = "0.3.5", features = ["http"] }
+```
 ```env
 LOG_TO_HTTP=true
 LOG_HTTP_ENDPOINT=http://elasticsearch:9200/logs/_bulk
@@ -158,6 +200,9 @@ LOG_GROUP=my_service
 ```
 
 ### CloudWatch
+```toml
+crypsol_logger = { version = "0.3.5", features = ["cloudwatch"] }
+```
 ```env
 LOG_TO_CLOUDWATCH=true
 CLOUDWATCH_AWS_ACCESS_KEY=AKIA...
@@ -167,13 +212,37 @@ LOG_GROUP=my_service
 ```
 
 ### Local File
+```toml
+crypsol_logger = "0.3.5"
+```
 ```env
 LOG_TO_FILE=true
 LOG_FILE_DIR=logs
 LOG_GROUP=my_service
 ```
 
----
+## Migrating from 0.3.x
+
+Default features changed. If you were using CloudWatch or HTTP backends, add the required feature:
+
+```diff
+# CloudWatch users
+-crypsol_logger = "0.3"
++crypsol_logger = { version = "0.3.5", features = ["cloudwatch"] }
+
+# Loki / Elasticsearch users
+-crypsol_logger = "0.3"
++crypsol_logger = { version = "0.3.5", features = ["http"] }
+```
+
+If you were only using console or file logging, just update the version:
+
+```diff
+-crypsol_logger = "0.3"
++crypsol_logger = "0.3.5"
+```
+
+No code changes required in any case — only `Cargo.toml`.
 
 ## Runtime Requirements
 
@@ -229,12 +298,6 @@ For high-throughput services (above 1k logs/sec), consider increasing
 `LOG_HTTP_BATCH_SIZE` / `LOG_BATCH_SIZE` and adjusting the timeout to
 match your latency tolerance.
 
-## 📜 License
+## License
 
-MIT © 2025 [Crypsol](https://crypsol.tech/)
-
----
-
-## 🧠 Also Available in Python!
-A **Python version** of this logger, which is also easily integratable with FastAPI, Flask, and other WSGI/ASGI frameworks:
-🔗 [cloudwatchpy — Python Logger for AWS CloudWatch](https://github.com/Irfan-Ahmad-byte/cloudwatchpy)
+MIT &copy; 2025 [Crypsol](https://crypsol.tech/)

@@ -1,34 +1,52 @@
-use once_cell::sync::{Lazy, OnceCell};
-use std::collections::HashMap;
+#[cfg(any(feature = "cloudwatch", feature = "file", feature = "http"))]
+use once_cell::sync::Lazy;
 use std::env;
 use std::error;
+
+#[cfg(feature = "cloudwatch")]
+use once_cell::sync::OnceCell;
+#[cfg(feature = "cloudwatch")]
+use std::collections::HashMap;
+#[cfg(feature = "cloudwatch")]
 use std::sync::Arc;
+#[cfg(feature = "file")]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "cloudwatch")]
 use tokio::sync::RwLock;
 
+#[cfg(feature = "cloudwatch")]
 use aws_config::{Region, SdkConfig};
+#[cfg(feature = "cloudwatch")]
 use aws_sdk_cloudwatchlogs::config::{Credentials, SharedCredentialsProvider};
+#[cfg(feature = "cloudwatch")]
 use aws_sdk_cloudwatchlogs::operation::put_log_events::PutLogEventsError;
+#[cfg(feature = "cloudwatch")]
 use aws_sdk_cloudwatchlogs::{Client as CloudWatchLogsClient, types::InputLogEvent};
 
+#[cfg(any(feature = "cloudwatch", feature = "file"))]
 use chrono::Utc;
 use colored::{ColoredString, Colorize};
 use env_logger::Builder;
 use log::Level;
+#[cfg(feature = "cloudwatch")]
 use tokio::time::{Duration, sleep};
 
+#[cfg(feature = "cloudwatch")]
 /// This static cache keeps track of whether a log group exists, avoiding repeated Describe calls.
 static GROUP_EXISTS_CACHE: Lazy<RwLock<HashMap<String, bool>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+#[cfg(feature = "cloudwatch")]
 /// This static cache keeps track of whether a particular log stream exists, avoiding repeated Describe calls.
 static STREAM_EXISTS_CACHE: Lazy<RwLock<HashMap<String, bool>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+#[cfg(feature = "cloudwatch")]
 /// A static map of log-stream keys to their latest sequence tokens, allowing for proper CloudWatch log event ordering.
 static NEXT_SEQUENCE_TOKENS: Lazy<RwLock<HashMap<String, Option<String>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+#[cfg(feature = "cloudwatch")]
 /// Indicates whether logging to AWS CloudWatch is enabled.
 static LOG_TO_CLOUDWATCH: Lazy<bool> = Lazy::new(|| {
     env::var("LOG_TO_CLOUDWATCH")
@@ -36,40 +54,55 @@ static LOG_TO_CLOUDWATCH: Lazy<bool> = Lazy::new(|| {
         .unwrap_or(false)
 });
 
-/// Helper function that returns the value of the static variable.
+#[cfg(feature = "cloudwatch")]
 pub fn is_log_to_cloudwatch_enabled() -> bool {
     *LOG_TO_CLOUDWATCH
 }
 
-/// Indicates whether logs should be written to a local file instead of CloudWatch.
+#[cfg(not(feature = "cloudwatch"))]
+pub fn is_log_to_cloudwatch_enabled() -> bool {
+    false
+}
+
+#[cfg(feature = "file")]
 static LOG_TO_FILE: Lazy<bool> = Lazy::new(|| {
     env::var("LOG_TO_FILE")
         .map(|val| val.to_lowercase() == "true")
         .unwrap_or(false)
 });
 
-/// Directory where local log files are stored.
+#[cfg(feature = "file")]
 static LOG_FILE_DIR: Lazy<String> =
     Lazy::new(|| env::var("LOG_FILE_DIR").unwrap_or_else(|_| "logs".to_string()));
 
-/// Helper to check if local file logging is enabled.
+#[cfg(feature = "file")]
 pub fn is_log_to_file_enabled() -> bool {
     *LOG_TO_FILE
 }
 
-/// Indicates whether logs should be pushed to a remote HTTP endpoint.
+#[cfg(not(feature = "file"))]
+pub fn is_log_to_file_enabled() -> bool {
+    false
+}
+
+#[cfg(feature = "http")]
 static LOG_TO_HTTP: Lazy<bool> = Lazy::new(|| {
     env::var("LOG_TO_HTTP")
         .map(|val| val.to_lowercase() == "true")
         .unwrap_or(false)
 });
 
-/// Helper to check if HTTP log push is enabled.
+#[cfg(feature = "http")]
 pub fn is_log_to_http_enabled() -> bool {
     *LOG_TO_HTTP
 }
 
-/// Returns the directory for local log files.
+#[cfg(not(feature = "http"))]
+pub fn is_log_to_http_enabled() -> bool {
+    false
+}
+
+#[cfg(feature = "file")]
 pub fn log_file_dir() -> &'static str {
     LOG_FILE_DIR.as_str()
 }
@@ -83,7 +116,7 @@ pub fn is_log_location_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// Batch size for sending log events to CloudWatch. Loaded once from the environment.
+#[cfg(feature = "cloudwatch")]
 static BATCH_SIZE: Lazy<usize> = Lazy::new(|| {
     env::var("LOG_BATCH_SIZE")
         .ok()
@@ -91,7 +124,7 @@ static BATCH_SIZE: Lazy<usize> = Lazy::new(|| {
         .unwrap_or(10)
 });
 
-/// Timeout duration for batching log events. Loaded once from the environment (in seconds, default 5 sec).
+#[cfg(feature = "cloudwatch")]
 static BATCH_TIMEOUT: Lazy<std::time::Duration> = Lazy::new(|| {
     env::var("BATCH_TIMEOUT")
         .ok()
@@ -100,8 +133,7 @@ static BATCH_TIMEOUT: Lazy<std::time::Duration> = Lazy::new(|| {
         .unwrap_or(std::time::Duration::from_secs(5))
 });
 
-/// How many days to keep log files on disk. Older files are removed automatically.
-/// Defaults to 30 days if not specified via the `LOG_RETENTION_DAYS` env variable.
+#[cfg(feature = "file")]
 static LOG_RETENTION_DAYS: Lazy<u64> = Lazy::new(|| {
     env::var("LOG_RETENTION_DAYS")
         .ok()
@@ -109,8 +141,7 @@ static LOG_RETENTION_DAYS: Lazy<u64> = Lazy::new(|| {
         .unwrap_or(30)
 });
 
-/// Maximum total size for all log files in megabytes. When exceeded, the oldest
-/// log files are deleted. Defaults to 512 MB if `LOG_RETENTION_SIZE_MB` is not set.
+#[cfg(feature = "file")]
 static LOG_RETENTION_SIZE_MB: Lazy<u64> = Lazy::new(|| {
     env::var("LOG_RETENTION_SIZE_MB")
         .ok()
@@ -118,8 +149,7 @@ static LOG_RETENTION_SIZE_MB: Lazy<u64> = Lazy::new(|| {
         .unwrap_or(512)
 });
 
-/// Amount of log data to delete when `LOG_RETENTION_SIZE_MB` is exceeded.
-/// Defaults to 100 MB if `LOG_DELETE_BATCH_MB` is not set.
+#[cfg(feature = "file")]
 static LOG_DELETE_BATCH_MB: Lazy<u64> = Lazy::new(|| {
     env::var("LOG_DELETE_BATCH_MB")
         .ok()
@@ -127,29 +157,26 @@ static LOG_DELETE_BATCH_MB: Lazy<u64> = Lazy::new(|| {
         .unwrap_or(100)
 });
 
-/// Counter used to throttle `cleanup_logs` calls in the file backend.
-/// A full directory scan on every write is too expensive under load.
+#[cfg(feature = "file")]
 static FILE_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
 
-/// Represents a single log event to be batched.
+#[cfg(feature = "cloudwatch")]
 struct BatchLogItem {
     group: String,
     stream: String,
     event: InputLogEvent,
 }
 
-/// A static channel sender for batching log events. This ensures events are buffered and sent as per the batching logic.
+#[cfg(feature = "cloudwatch")]
 static LOG_BATCH_SENDER: Lazy<tokio::sync::mpsc::Sender<BatchLogItem>> = Lazy::new(|| {
     let (tx, rx) = tokio::sync::mpsc::channel::<BatchLogItem>(1000);
-    // Spawn the background task to process batched log events.
     tokio::spawn(async move {
         process_log_batches(rx).await;
     });
     tx
 });
 
-/// A globally shared client for CloudWatch Logs. This approach ensures that only one client instance is created
-/// and reused throughout the program lifecycle. We retrieve necessary credentials and region info from the environment.
+#[cfg(feature = "cloudwatch")]
 static GLOBAL_CLIENT: Lazy<Arc<CloudWatchLogsClient>> = Lazy::new(|| {
     let region_str = env::var("CLOUDWATCH_AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
     let region = Region::new(region_str);
@@ -159,27 +186,21 @@ static GLOBAL_CLIENT: Lazy<Arc<CloudWatchLogsClient>> = Lazy::new(|| {
     let secret_key =
         env::var("CLOUDWATCH_AWS_SECRET_KEY").unwrap_or_else(|_| "MISSING_SECRET".to_string());
 
-    // Construct AWS credentials provider
     let credentials = Credentials::new(access_key, secret_key, None, None, "default");
     let creds_provider = SharedCredentialsProvider::new(credentials);
 
-    // Build the overall configuration, specifying region and credentials
     let config = SdkConfig::builder()
         .region(region)
         .credentials_provider(creds_provider)
         .build();
 
-    // Wrap the CloudWatchLogsClient in an Arc so it can be cloned and shared safely
     Arc::new(CloudWatchLogsClient::new(&config))
 });
 
-/// Stores the result of verifying AWS credentials and permissions. This check
-/// runs only once on the first log attempt.
+#[cfg(feature = "cloudwatch")]
 static CREDENTIAL_CHECK: OnceCell<Result<(), Error>> = OnceCell::new();
 
-/// Performs a one-time verification that the provided AWS credentials are valid
-/// and have permission to interact with CloudWatch Logs. It attempts a simple
-/// API call and stores the result so subsequent calls are fast.
+#[cfg(feature = "cloudwatch")]
 async fn verify_cloudwatch_credentials(
     client: &CloudWatchLogsClient,
     group: &str,
@@ -225,8 +246,7 @@ impl std::fmt::Display for Error {
 
 impl error::Error for Error {}
 
-/// Executes the provided async operation, retrying with exponential backoff if
-/// the result is an `Error::AwsConfig` containing `"ThrottlingException"`.
+#[cfg(feature = "cloudwatch")]
 async fn retry_on_throttling<F, Fut, T>(mut op: F) -> Result<T, Error>
 where
     F: FnMut() -> Fut,
@@ -291,7 +311,7 @@ impl LogStream {
         }
     }
 
-    /// Generates a date-based log stream name for daily partitioning, e.g. `"2025-01-21-Server_Error_Responses"`.
+    #[cfg(any(feature = "cloudwatch", feature = "file"))]
     fn with_date(&self) -> String {
         let current_date = Utc::now().format("%Y-%m-%d").to_string();
         format!("{}-{}", current_date, self.as_str())
@@ -344,17 +364,7 @@ pub fn colored_level(level: Level) -> ColoredString {
     }
 }
 
-/// Sends a custom log message to CloudWatch if the `LOG_GROUP` (or legacy `AWS_LOG_GROUP`)
-/// environment variable is set, otherwise returning an error if it is missing.
-/// This function ensures the log group and log stream exist, and then queues
-/// the log event for batching.
-///
-/// # Arguments
-/// * `level` - The log level (e.g., `Level::Info`)
-/// * `message` - The log message to be recorded
-/// * `log_stream` - The stream category or custom name
-/// * `file` - The source file where the log occurred
-/// * `line` - The line number in the source file
+#[cfg(feature = "cloudwatch")]
 pub async fn custom_cloudwatch_log(
     level: Level,
     message: &str,
@@ -416,15 +426,7 @@ pub async fn custom_cloudwatch_log(
     Ok(())
 }
 
-/// Writes a log message to a local file using the same log group and stream
-/// structure as CloudWatch. The directory is configurable via `LOG_FILE_DIR`.
-///
-/// # Arguments
-/// * `level` - The log level (e.g., `Level::Info`)
-/// * `message` - The log message to record
-/// * `log_stream` - The stream category or custom name
-/// * `file` - The source file where the log occurred
-/// * `line` - The line number in the source file
+#[cfg(feature = "file")]
 pub async fn write_log_to_file(
     level: Level,
     message: &str,
@@ -466,14 +468,7 @@ pub async fn write_log_to_file(
     Ok(())
 }
 
-/// Sends a batch of log events to CloudWatch, retrying once if an `InvalidSequenceTokenException` occurs.
-/// This is analogous to `put_log_events_with_retry` but handles a vector of events.
-///
-/// # Arguments
-/// * `client` - The CloudWatchLogs client
-/// * `group` - The log group name
-/// * `stream` - The log stream name
-/// * `events` - The vector of `InputLogEvent` to be sent
+#[cfg(feature = "cloudwatch")]
 async fn put_log_events_batch_with_retry(
     client: &CloudWatchLogsClient,
     group: &str,
@@ -524,15 +519,7 @@ async fn put_log_events_batch_with_retry(
     }
 }
 
-/// Sends the log events to CloudWatch once using the specified sequence token (if any).
-/// If the call succeeds, it returns the new token included in the response.
-///
-/// # Arguments
-/// * `client` - The CloudWatchLogs client
-/// * `group` - The log group name
-/// * `stream` - The log stream name
-/// * `sequence_token` - Current sequence token if available
-/// * `events` - Vector of `InputLogEvent`
+#[cfg(feature = "cloudwatch")]
 async fn put_log_events_once(
     client: &CloudWatchLogsClient,
     group: &str,
@@ -558,13 +545,7 @@ async fn put_log_events_once(
     Ok(next_tok)
 }
 
-/// Fetches the latest sequence token from AWS for the given log stream. This is called after detecting an
-/// `InvalidSequenceTokenException` to ensure the next attempt uses the correct token.
-///
-/// # Arguments
-/// * `client` - The CloudWatchLogs client
-/// * `group` - The log group name
-/// * `stream` - The log stream name
+#[cfg(feature = "cloudwatch")]
 async fn fetch_latest_stream_token(
     client: &CloudWatchLogsClient,
     group: &str,
@@ -588,23 +569,13 @@ async fn fetch_latest_stream_token(
     None
 }
 
-/// Updates the in-memory sequence token map with the new token if it exists.
-///
-/// # Arguments
-/// * `key` - A string key composed of `log_group::log_stream`
-/// * `new_tok` - The new sequence token returned from CloudWatch
+#[cfg(feature = "cloudwatch")]
 async fn update_sequence_token(key: String, new_tok: Option<String>) {
     let mut map = NEXT_SEQUENCE_TOKENS.write().await;
     map.insert(key, new_tok);
 }
 
-/// Ensures that the specified log stream exists within the given log group. If not, it creates it.
-/// Also updates the STREAM_EXISTS_CACHE upon success, avoiding repeated checks.
-///
-/// # Arguments
-/// * `client` - The CloudWatchLogs client
-/// * `group` - The log group name
-/// * `stream` - The log stream name
+#[cfg(feature = "cloudwatch")]
 async fn ensure_log_stream_exists(
     client: &CloudWatchLogsClient,
     group: &str,
@@ -677,11 +648,7 @@ async fn ensure_log_stream_exists(
     Ok(())
 }
 
-/// Ensures the specified log group exists, creating it if necessary, and populates the GROUP_EXISTS_CACHE.
-///
-/// # Arguments
-/// * `client` - The CloudWatchLogs client
-/// * `group` - The log group name
+#[cfg(feature = "cloudwatch")]
 async fn ensure_log_group_exists(client: &CloudWatchLogsClient, group: &str) -> Result<(), Error> {
     // Check group cache first
     {
@@ -743,11 +710,7 @@ async fn ensure_log_group_exists(client: &CloudWatchLogsClient, group: &str) -> 
     Ok(())
 }
 
-/// Processes batched log events. Groups events by (log group, log stream) and flushes them when the batch size
-/// reaches the threshold or the timeout expires. This ensures that in development when logs are infrequent,
-/// events are still flushed after the timeout.
-///
-/// Note: This function respects API call limits by batching events.
+#[cfg(feature = "cloudwatch")]
 async fn process_log_batches(mut rx: tokio::sync::mpsc::Receiver<BatchLogItem>) {
     use std::collections::HashMap;
     use tokio::time;
@@ -789,10 +752,7 @@ async fn process_log_batches(mut rx: tokio::sync::mpsc::Receiver<BatchLogItem>) 
     }
 }
 
-/// Cleans up old log files according to retention settings.
-/// Files older than `LOG_RETENTION_DAYS` are removed. If the total size of the
-/// log directory exceeds `LOG_RETENTION_SIZE_MB`, the oldest files totaling
-/// `LOG_DELETE_BATCH_MB` are deleted in one go.
+#[cfg(feature = "file")]
 pub async fn cleanup_logs() -> Result<(), std::io::Error> {
     use std::path::PathBuf;
     use tokio::fs;
@@ -889,4 +849,55 @@ pub fn initialize_logs() {
 
         eprintln!("PANIC => {panic_message}");
     }));
+}
+
+// Stubs for disabled features — the runtime checks (is_log_to_*_enabled)
+// already return false, but these must exist so macro-expanded code links.
+
+#[cfg(not(feature = "cloudwatch"))]
+pub async fn custom_cloudwatch_log(
+    _level: Level,
+    _message: &str,
+    _log_stream: LogStream,
+    _file: &str,
+    _line: u32,
+) -> Result<(), Error> {
+    Ok(())
+}
+
+#[cfg(not(feature = "file"))]
+pub async fn write_log_to_file(
+    _level: Level,
+    _message: &str,
+    _log_stream: LogStream,
+    _file: &str,
+    _line: u32,
+) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+#[cfg(not(feature = "file"))]
+pub async fn cleanup_logs() -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+#[cfg(feature = "http")]
+pub async fn queue_http_log(
+    level: Level,
+    message: &str,
+    log_stream: LogStream,
+    file: &str,
+    line: u32,
+) {
+    crate::http_backend::queue_http_log(level, message, log_stream, file, line).await;
+}
+
+#[cfg(not(feature = "http"))]
+pub async fn queue_http_log(
+    _level: Level,
+    _message: &str,
+    _log_stream: LogStream,
+    _file: &str,
+    _line: u32,
+) {
 }
