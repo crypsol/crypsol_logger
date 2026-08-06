@@ -83,6 +83,17 @@ fn test_build_structured_message_single_field() {
     assert_eq!(parsed["count"], "7");
 }
 
+#[test]
+fn test_is_level_enabled_respects_max_level() {
+    let previous = log::max_level();
+    log::set_max_level(log::LevelFilter::Error);
+    assert!(!logs::is_level_enabled(
+        Level::Info,
+        "crypsol_logger::tests"
+    ));
+    log::set_max_level(previous);
+}
+
 #[tokio::test]
 async fn test_log_macro_structured_arm() {
     unsafe { std::env::remove_var("LOG_TO_CLOUDWATCH") };

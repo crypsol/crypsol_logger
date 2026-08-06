@@ -84,6 +84,20 @@ log_custom!(Level::Info, "Payments", "charge created"; "tx" => tx_hash, "total" 
 
 ## Environment Variables
 
+### Log Level (`RUST_LOG`)
+
+Standard [`env_logger`](https://docs.rs/env_logger) filter. Call `initialize_logs()` once at startup (after `dotenv`).
+
+| Value | Effect |
+|-------|--------|
+| `Error` | Only `Level::Error` |
+| `Warn` | Warn + Error |
+| `Info` | Info + Warn + Error |
+| `Debug` | Debug + Info + Warn + Error |
+| `Trace` | All levels (`Trace` included) |
+
+Also filters third-party crates that use the `log` crate (e.g. `clickhouse`). Example: `RUST_LOG=Warn` hides Info noise from dependencies and from `log!`.
+
 ### Backend Selection
 
 Backends are checked in order: CloudWatch > HTTP > File > Console.

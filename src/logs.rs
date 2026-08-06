@@ -116,6 +116,19 @@ pub fn is_log_location_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Returns whether `level` is enabled for `target` under the active `RUST_LOG` filter.
+///
+/// Call after [`initialize_logs`]. Uses the same rules as the `log` crate /
+/// `env_logger` (`Error` < `Warn` < `Info` < `Debug` < `Trace`).
+#[inline]
+pub fn is_level_enabled(level: Level, target: &str) -> bool {
+    if level > log::max_level() {
+        return false;
+    }
+    let metadata = log::Metadata::builder().level(level).target(target).build();
+    log::logger().enabled(&metadata)
+}
+
 #[cfg(feature = "cloudwatch")]
 static BATCH_SIZE: Lazy<usize> = Lazy::new(|| {
     env::var("LOG_BATCH_SIZE")

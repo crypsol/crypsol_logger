@@ -2,6 +2,22 @@
 
 All notable changes to `crypsol_logger` will be documented in this file.
 
+## [0.3.6] - 2026-08-06
+
+### Fixed
+- `log!` / `log_custom!` now honour `RUST_LOG` (via `env_logger` / `log` crate filters).
+  Previously console/file/CloudWatch/HTTP paths always emitted, so `RUST_LOG=Error` did not hide Info/Warn app logs.
+- Added `logs::is_level_enabled(level, target)` used by both macros before formatting or dispatching.
+
+### Behaviour
+| `RUST_LOG` | App `log!` | Third-party (`log` crate, e.g. clickhouse) |
+|------------|------------|-----------------------------------------------|
+| `Error` | Error only | Error only |
+| `Warn` | Warn + Error | Warn + Error |
+| `Info` | Info + Warn + Error | Info + Warn + Error |
+| `Debug` | Debug + Info + Warn + Error | Debug + Info + Warn + Error |
+| `Trace` | All levels | All levels |
+
 ## [0.3.5] - 2026-03-30
 
 ### Breaking Changes
